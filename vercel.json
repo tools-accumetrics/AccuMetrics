@@ -1,15 +1,21 @@
 {
   "version": 2,
-  "name": "accumetrics",
-  "buildCommand": "echo 'No build needed'",
-  "devCommand": "vercel dev",
-  "functions": {
-    "api/**/*.py": {
-      "runtime": "python3.9",
-      "maxDuration": 10,
-      "memory": 512
+  "builds": [
+    {
+      "src": "api/track.py",
+      "use": "@vercel/python"
     }
-  },
+  ],
+  "routes": [
+    {
+      "src": "/api/track",
+      "dest": "api/track.py"
+    },
+    {
+      "src": "/track",
+      "dest": "api/track.py"
+    }
+  ],
   "headers": [
     {
       "source": "/api/(.*)",
@@ -31,12 +37,6 @@
           "value": "X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, X-Tracking-Code"
         }
       ]
-    }
-  ],
-  "rewrites": [
-    {
-      "source": "/track",
-      "destination": "/api/track"
     }
   ]
 }

@@ -96,12 +96,12 @@ def check_client_limit(client_id: str) -> bool:
         return result.data if result.data is not None else True
     except Exception as e:
         print(f"Error checking client limit: {str(e)}")
-        return True  # En caso de error, permitir el evento
+        return True
 
 def verify_domain(origin: str, allowed_domains: list) -> bool:
     """Verifica si el origen está en la lista de dominios permitidos"""
     if not allowed_domains:
-        return True  # Si no hay restricciones, permitir todo
+        return True
     
     from urllib.parse import urlparse
     origin_domain = urlparse(origin).netloc if origin else ''
@@ -115,15 +115,18 @@ def verify_domain(origin: str, allowed_domains: list) -> bool:
 class handler(BaseHTTPRequestHandler):
     """Handler principal para Vercel Serverless Function"""
     
-    def do_OPTIONS(self):
-        """Maneja preflight CORS requests"""
+    def _set_cors_headers(self):
+        """Establece headers CORS"""
         origin = self.headers.get('Origin', '*')
-        
-        self.send_response(200)
-        self.send_header('Access-Control-Allow-Origin', origin)
+        self.send_header('Access-Control-Allow-Origin', origin if origin else '*')
         self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Tracking-Code')
         self.send_header('Access-Control-Max-Age', '86400')
+    
+    def do_OPTIONS(self):
+        """Maneja preflight CORS requests"""
+        self.send_response(200)
+        self._set_cors_headers()
         self.end_headers()
     
     def do_POST(self):
@@ -222,7 +225,7 @@ class handler(BaseHTTPRequestHandler):
             
             # Responder con éxito
             self.send_response(204)
-            self.send_header('Access-Control-Allow-Origin', origin or '*')
+            self._set_cors_headers()
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
             self.send_header('Pragma', 'no-cache')
             self.send_header('Expires', '0')
@@ -232,14 +235,12 @@ class handler(BaseHTTPRequestHandler):
             self.send_error_response(400, "Invalid JSON")
         except Exception as e:
             print(f"Error processing event: {str(e)}")
-            self.send_error_response(500, "Internal server error")
+            self.send_error_response(500, f"Internal server error: {str(e)}")
     
     def send_error_response(self, code: int, message: str):
         """Envía respuesta de error"""
-        origin = self.headers.get('Origin', '*')
-        
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', origin)
+        self._set_cors_headers()
         self.end_headers()
         self.wfile.write(json.dumps({"error": message}).encode('utf-8'))

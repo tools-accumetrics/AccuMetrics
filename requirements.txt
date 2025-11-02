@@ -1,0 +1,10 @@
+# AccuMetrics - Dependencies for Vercel
+
+# Supabase client
+supabase==2.3.4
+
+# User-Agent parsing
+user-agents==2.2.0
+
+# HTTP utilities
+requests==2.31.0

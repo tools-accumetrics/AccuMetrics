@@ -6,14 +6,10 @@
       "use": "@vercel/python"
     }
   ],
-  "routes": [
+  "rewrites": [
     {
-      "src": "/api/track",
-      "dest": "api/track.py"
-    },
-    {
-      "src": "/track",
-      "dest": "api/track.py"
+      "source": "/track",
+      "destination": "/api/track"
     }
   ],
   "headers": [

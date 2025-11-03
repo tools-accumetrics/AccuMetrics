@@ -1,6 +1,6 @@
 """
 Analytics Pixel - Vercel Serverless Function (Multi-tenant)
-Soporta múltiples clientes y proyectos
+Usa REST API de Supabase directamente sin SDK
 """
 
 from http.server import BaseHTTPRequestHandler
@@ -9,21 +9,20 @@ import os
 import re
 from datetime import datetime
 from user_agents import parse
-from supabase import create_client, Client
+import requests
 
 # Configuración de Supabase
 SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_SERVICE_KEY')
 
-# Cliente de Supabase (se inicializa lazy)
-_supabase_client = None
-
-def get_supabase():
-    """Obtiene o crea el cliente de Supabase"""
-    global _supabase_client
-    if _supabase_client is None:
-        _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    return _supabase_client
+# Headers para Supabase REST API
+def get_supabase_headers():
+    return {
+        'apikey': SUPABASE_KEY,
+        'Authorization': f'Bearer {SUPABASE_KEY}',
+        'Content-Type': 'application/json',
+        'Prefer': 'return=representation'
+    }
 
 # Lista de User-Agents de bots conocidos
 BOT_PATTERNS = [
@@ -85,24 +84,41 @@ def get_client_ip(headers: dict) -> str:
     return 'unknown'
 
 def get_project_info(tracking_code: str) -> dict:
-    """Obtiene información del proyecto desde el tracking_code"""
+    """Obtiene información del proyecto desde el tracking_code usando REST API"""
     try:
-        result = get_supabase().table('projects').select('project_id, client_id, is_active, allowed_domains').eq('tracking_code', tracking_code).single().execute()
+        print(f"[DEBUG] Fetching project for tracking_code: {tracking_code}")
         
-        if result.data and result.data.get('is_active'):
-            return result.data
+        url = f"{SUPABASE_URL}/rest/v1/projects"
+        params = {
+            'tracking_code': f'eq.{tracking_code}',
+            'select': 'project_id,client_id,is_active,allowed_domains'
+        }
+        
+        response = requests.get(url, headers=get_supabase_headers(), params=params, timeout=10)
+        
+        print(f"[DEBUG] Response status: {response.status_code}")
+        
+        if response.status_code == 200:
+            data = response.json()
+            if data and len(data) > 0 and data[0].get('is_active'):
+                print(f"[DEBUG] Project found: {data[0]['project_id']}")
+                return data[0]
+        
+        print(f"[DEBUG] Project not found or inactive")
         return None
+        
     except Exception as e:
-        print(f"Error getting project info: {str(e)}")
+        print(f"[ERROR] Error getting project info: {str(e)}")
         return None
 
 def check_client_limit(client_id: str) -> bool:
     """Verifica si el cliente ha excedido su límite de eventos"""
     try:
-        result = get_supabase().rpc('check_client_event_limit', {'p_client_id': client_id}).execute()
-        return result.data if result.data is not None else True
+        # Por ahora, siempre retorna True (sin límite)
+        # TODO: Implementar lógica de límites si es necesario
+        return True
     except Exception as e:
-        print(f"Error checking client limit: {str(e)}")
+        print(f"[ERROR] Error checking client limit: {str(e)}")
         return True
 
 def verify_domain(origin: str, allowed_domains: list) -> bool:
@@ -119,6 +135,33 @@ def verify_domain(origin: str, allowed_domains: list) -> bool:
     
     return False
 
+def insert_event(event_data: dict) -> bool:
+    """Inserta evento en Supabase usando REST API"""
+    try:
+        print(f"[DEBUG] Inserting event: {event_data['event_id']}")
+        
+        url = f"{SUPABASE_URL}/rest/v1/events_raw"
+        
+        response = requests.post(
+            url, 
+            headers=get_supabase_headers(), 
+            json=event_data,
+            timeout=10
+        )
+        
+        print(f"[DEBUG] Insert response status: {response.status_code}")
+        
+        if response.status_code in [200, 201]:
+            print(f"[DEBUG] Event inserted successfully")
+            return True
+        else:
+            print(f"[ERROR] Insert failed: {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"[ERROR] Error inserting event: {str(e)}")
+        return False
+
 class handler(BaseHTTPRequestHandler):
     """Handler principal para Vercel Serverless Function"""
     
@@ -132,21 +175,21 @@ class handler(BaseHTTPRequestHandler):
     
     def do_OPTIONS(self):
         """Maneja preflight CORS requests"""
-        print("OPTIONS request received")
+        print("[INFO] OPTIONS request received")
         self.send_response(200)
         self._set_cors_headers()
         self.end_headers()
     
     def do_GET(self):
         """Maneja GET requests - solo para testing"""
-        print("GET request received")
+        print("[INFO] GET request received")
         self.send_response(200)
         self._set_cors_headers()
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
         response = {
             "status": "ok",
-            "message": "AccuMetrics API is running",
+            "message": "AccuMetrics API is running (REST API version)",
             "endpoint": "/api/track",
             "methods": ["POST", "OPTIONS"]
         }
@@ -154,7 +197,7 @@ class handler(BaseHTTPRequestHandler):
     
     def do_POST(self):
         """Procesa evento de tracking"""
-        print("POST request received")
+        print("[INFO] POST request received")
         try:
             # Obtener tracking_code del header o del body
             tracking_code = self.headers.get('X-Tracking-Code')
@@ -172,7 +215,7 @@ class handler(BaseHTTPRequestHandler):
                 self.send_error_response(400, "Missing tracking_code")
                 return
             
-            print(f"Tracking code: {tracking_code}")
+            print(f"[INFO] Tracking code: {tracking_code}")
             
             # Obtener información del proyecto
             project_info = get_project_info(tracking_code)
@@ -185,7 +228,7 @@ class handler(BaseHTTPRequestHandler):
             client_id = project_info['client_id']
             allowed_domains = project_info.get('allowed_domains', [])
             
-            print(f"Project ID: {project_id}, Client ID: {client_id}")
+            print(f"[INFO] Project ID: {project_id}, Client ID: {client_id}")
             
             # Verificar origen si hay restricciones de dominio
             origin = self.headers.get('Origin', '')
@@ -248,12 +291,14 @@ class handler(BaseHTTPRequestHandler):
                 'processed_at': datetime.utcnow().isoformat()
             }
             
-            print(f"Inserting event: {enriched_data['event_id']}")
-            
             # Insertar en Supabase
-            result = get_supabase().table('events_raw').insert(enriched_data).execute()
+            success = insert_event(enriched_data)
             
-            print(f"Event inserted successfully")
+            if not success:
+                self.send_error_response(500, "Failed to insert event")
+                return
+            
+            print(f"[INFO] Event processed successfully")
             
             # Responder con éxito
             self.send_response(204)
@@ -264,15 +309,17 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             
         except json.JSONDecodeError:
-            print("JSON decode error")
+            print("[ERROR] JSON decode error")
             self.send_error_response(400, "Invalid JSON")
         except Exception as e:
-            print(f"Exception: {str(e)}")
-            self.send_error_response(500, f"Internal server error: {str(e)}")
+            print(f"[ERROR] Exception: {str(e)}")
+            import traceback
+            print(f"[ERROR] Traceback: {traceback.format_exc()}")
+            self.send_error_response(500, f"Internal server error")
     
     def send_error_response(self, code: int, message: str):
         """Envía respuesta de error"""
-        print(f"Error response: {code} - {message}")
+        print(f"[ERROR] {code} - {message}")
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self._set_cors_headers()

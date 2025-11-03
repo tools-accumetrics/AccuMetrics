@@ -15,8 +15,15 @@ from supabase import create_client, Client
 SUPABASE_URL = os.environ.get('SUPABASE_URL')
 SUPABASE_KEY = os.environ.get('SUPABASE_SERVICE_KEY')
 
-# Inicializar cliente de Supabase
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Cliente de Supabase (se inicializa lazy)
+_supabase_client = None
+
+def get_supabase():
+    """Obtiene o crea el cliente de Supabase"""
+    global _supabase_client
+    if _supabase_client is None:
+        _supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    return _supabase_client
 
 # Lista de User-Agents de bots conocidos
 BOT_PATTERNS = [
@@ -80,7 +87,7 @@ def get_client_ip(headers: dict) -> str:
 def get_project_info(tracking_code: str) -> dict:
     """Obtiene información del proyecto desde el tracking_code"""
     try:
-        result = supabase.table('projects').select('project_id, client_id, is_active, allowed_domains').eq('tracking_code', tracking_code).single().execute()
+        result = get_supabase().table('projects').select('project_id, client_id, is_active, allowed_domains').eq('tracking_code', tracking_code).single().execute()
         
         if result.data and result.data.get('is_active'):
             return result.data
@@ -92,7 +99,7 @@ def get_project_info(tracking_code: str) -> dict:
 def check_client_limit(client_id: str) -> bool:
     """Verifica si el cliente ha excedido su límite de eventos"""
     try:
-        result = supabase.rpc('check_client_event_limit', {'p_client_id': client_id}).execute()
+        result = get_supabase().rpc('check_client_event_limit', {'p_client_id': client_id}).execute()
         return result.data if result.data is not None else True
     except Exception as e:
         print(f"Error checking client limit: {str(e)}")
@@ -119,18 +126,35 @@ class handler(BaseHTTPRequestHandler):
         """Establece headers CORS"""
         origin = self.headers.get('Origin', '*')
         self.send_header('Access-Control-Allow-Origin', origin if origin else '*')
-        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS, GET')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Tracking-Code')
         self.send_header('Access-Control-Max-Age', '86400')
     
     def do_OPTIONS(self):
         """Maneja preflight CORS requests"""
+        print("OPTIONS request received")
         self.send_response(200)
         self._set_cors_headers()
         self.end_headers()
     
+    def do_GET(self):
+        """Maneja GET requests - solo para testing"""
+        print("GET request received")
+        self.send_response(200)
+        self._set_cors_headers()
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        response = {
+            "status": "ok",
+            "message": "AccuMetrics API is running",
+            "endpoint": "/api/track",
+            "methods": ["POST", "OPTIONS"]
+        }
+        self.wfile.write(json.dumps(response).encode('utf-8'))
+    
     def do_POST(self):
         """Procesa evento de tracking"""
+        print("POST request received")
         try:
             # Obtener tracking_code del header o del body
             tracking_code = self.headers.get('X-Tracking-Code')
@@ -148,6 +172,8 @@ class handler(BaseHTTPRequestHandler):
                 self.send_error_response(400, "Missing tracking_code")
                 return
             
+            print(f"Tracking code: {tracking_code}")
+            
             # Obtener información del proyecto
             project_info = get_project_info(tracking_code)
             
@@ -158,6 +184,8 @@ class handler(BaseHTTPRequestHandler):
             project_id = project_info['project_id']
             client_id = project_info['client_id']
             allowed_domains = project_info.get('allowed_domains', [])
+            
+            print(f"Project ID: {project_id}, Client ID: {client_id}")
             
             # Verificar origen si hay restricciones de dominio
             origin = self.headers.get('Origin', '')
@@ -220,8 +248,12 @@ class handler(BaseHTTPRequestHandler):
                 'processed_at': datetime.utcnow().isoformat()
             }
             
+            print(f"Inserting event: {enriched_data['event_id']}")
+            
             # Insertar en Supabase
-            result = supabase.table('events_raw').insert(enriched_data).execute()
+            result = get_supabase().table('events_raw').insert(enriched_data).execute()
+            
+            print(f"Event inserted successfully")
             
             # Responder con éxito
             self.send_response(204)
@@ -232,13 +264,15 @@ class handler(BaseHTTPRequestHandler):
             self.end_headers()
             
         except json.JSONDecodeError:
+            print("JSON decode error")
             self.send_error_response(400, "Invalid JSON")
         except Exception as e:
-            print(f"Error processing event: {str(e)}")
+            print(f"Exception: {str(e)}")
             self.send_error_response(500, f"Internal server error: {str(e)}")
     
     def send_error_response(self, code: int, message: str):
         """Envía respuesta de error"""
+        print(f"Error response: {code} - {message}")
         self.send_response(code)
         self.send_header('Content-Type', 'application/json')
         self._set_cors_headers()

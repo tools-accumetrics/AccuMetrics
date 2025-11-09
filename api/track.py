@@ -215,7 +215,13 @@ class handler(BaseHTTPRequestHandler):
     def _set_cors_headers(self):
         """Establece headers CORS"""
         origin = self.headers.get('Origin', '*')
-        self.send_header('Access-Control-Allow-Origin', origin if origin else '*')
+        
+        # Permitir 'null' para testing desde file://
+        if origin == 'null' or not origin:
+            self.send_header('Access-Control-Allow-Origin', '*')
+        else:
+            self.send_header('Access-Control-Allow-Origin', origin)
+        
         self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS, GET')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Tracking-Code')
         self.send_header('Access-Control-Max-Age', '86400')

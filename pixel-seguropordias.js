@@ -152,23 +152,26 @@
 
     log('Sending event:', eventData.event_type, eventData.event_name || '');
 
-    // Usar sendBeacon si está disponible (más confiable)
-    if (navigator.sendBeacon) {
+    // Usar sendBeacon si está disponible y no estamos en file:// (más confiable)
+    if (navigator.sendBeacon && window.location.protocol !== 'file:') {
       const blob = new Blob([JSON.stringify(eventData)], { type: 'application/json' });
       const sent = navigator.sendBeacon(CONFIG.endpoint, blob);
       log('Event sent via sendBeacon:', sent);
     } else {
-      // Fallback a fetch
+      // Fallback a fetch (necesario para file:// y navegadores antiguos)
       fetch(CONFIG.endpoint, {
         method: 'POST',
+        mode: 'cors',
         headers: {
           'Content-Type': 'application/json',
           'X-Tracking-Code': CONFIG.trackingCode
         },
         body: JSON.stringify(eventData),
         keepalive: true
-      }).then(function() {
-        log('Event sent via fetch');
+      }).then(function(response) {
+        if (response.ok || response.status === 204) {
+          log('Event sent successfully via fetch');
+        }
       }).catch(function(error) {
         console.error('[AccuMetrics] Error:', error);
       });

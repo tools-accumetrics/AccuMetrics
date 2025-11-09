@@ -220,7 +220,9 @@ class handler(BaseHTTPRequestHandler):
         if origin == 'null' or not origin:
             self.send_header('Access-Control-Allow-Origin', '*')
         else:
+            # Para dominios reales, enviar el origen específico y permitir credenciales
             self.send_header('Access-Control-Allow-Origin', origin)
+            self.send_header('Access-Control-Allow-Credentials', 'true')
         
         self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS, GET')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Tracking-Code')

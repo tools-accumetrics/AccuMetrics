@@ -1,5 +1,6 @@
 """
 Analytics Pixel - Vercel Serverless Function (Multi-tenant)
+Versión: 2.0.0 - Con soporte para eventos personalizados y e-commerce
 Usa REST API de Supabase directamente sin SDK
 """
 
@@ -135,6 +136,52 @@ def verify_domain(origin: str, allowed_domains: list) -> bool:
     
     return False
 
+def validate_ecommerce_data(ecommerce_data: dict) -> tuple:
+    """
+    Valida los datos de e-commerce
+    Retorna (is_valid, error_message)
+    """
+    if not ecommerce_data:
+        return True, None
+    
+    # Validar campos obligatorios para purchase
+    if not ecommerce_data.get('transaction_id'):
+        return False, "ecommerce_data.transaction_id is required"
+    
+    if 'value' not in ecommerce_data:
+        return False, "ecommerce_data.value is required"
+    
+    try:
+        value = float(ecommerce_data['value'])
+        if value < 0:
+            return False, "ecommerce_data.value must be >= 0"
+    except (ValueError, TypeError):
+        return False, "ecommerce_data.value must be a number"
+    
+    # Validar items si existe
+    if 'items' in ecommerce_data:
+        if not isinstance(ecommerce_data['items'], list):
+            return False, "ecommerce_data.items must be an array"
+        
+        for idx, item in enumerate(ecommerce_data['items']):
+            if not isinstance(item, dict):
+                return False, f"ecommerce_data.items[{idx}] must be an object"
+            
+            # Validar campos del item
+            if 'price' in item:
+                try:
+                    float(item['price'])
+                except (ValueError, TypeError):
+                    return False, f"ecommerce_data.items[{idx}].price must be a number"
+            
+            if 'quantity' in item:
+                try:
+                    int(item['quantity'])
+                except (ValueError, TypeError):
+                    return False, f"ecommerce_data.items[{idx}].quantity must be an integer"
+    
+    return True, None
+
 def insert_event(event_data: dict) -> bool:
     """Inserta evento en Supabase usando REST API"""
     try:
@@ -189,9 +236,15 @@ class handler(BaseHTTPRequestHandler):
         self.end_headers()
         response = {
             "status": "ok",
-            "message": "AccuMetrics API is running (REST API version)",
+            "message": "AccuMetrics API v2.0.0 - Custom Events & E-commerce",
             "endpoint": "/api/track",
-            "methods": ["POST", "OPTIONS"]
+            "methods": ["POST", "OPTIONS"],
+            "features": [
+                "pageview tracking",
+                "custom events",
+                "e-commerce (purchase)",
+                "dataLayer integration"
+            ]
         }
         self.wfile.write(json.dumps(response).encode('utf-8'))
     
@@ -250,6 +303,29 @@ class handler(BaseHTTPRequestHandler):
                     self.send_error_response(400, f"Missing required field: {field}")
                     return
             
+            # Validar event_type
+            valid_event_types = ['pageview', 'event']
+            if event_data['event_type'] not in valid_event_types:
+                self.send_error_response(400, f"Invalid event_type. Must be one of: {valid_event_types}")
+                return
+            
+            # Si es un evento custom, validar event_name
+            if event_data['event_type'] == 'event':
+                if not event_data.get('event_name'):
+                    self.send_error_response(400, "event_name is required for event_type='event'")
+                    return
+                
+                print(f"[INFO] Custom event: {event_data['event_name']}")
+            
+            # Validar datos de e-commerce si existen
+            ecommerce_data = event_data.get('ecommerce_data')
+            if ecommerce_data:
+                is_valid, error_msg = validate_ecommerce_data(ecommerce_data)
+                if not is_valid:
+                    self.send_error_response(400, f"Invalid ecommerce_data: {error_msg}")
+                    return
+                print(f"[INFO] E-commerce event: {ecommerce_data.get('transaction_id')}")
+            
             # Obtener IP del cliente
             headers_dict = dict(self.headers)
             client_ip = get_client_ip(headers_dict)
@@ -261,7 +337,7 @@ class handler(BaseHTTPRequestHandler):
             # Detectar bot
             is_bot_detected = is_bot(event_data['user_agent']) or ua_data.get('is_bot', False)
             
-            # Construir registro enriquecido con project_id y client_id
+            # Construir registro enriquecido
             enriched_data = {
                 'event_id': event_data['event_id'],
                 'project_id': project_id,
@@ -270,6 +346,7 @@ class handler(BaseHTTPRequestHandler):
                 'user_id': event_data['user_id'],
                 'session_id': event_data['session_id'],
                 'event_type': event_data['event_type'],
+                'event_name': event_data.get('event_name'),  # Nuevo campo
                 'page_url': event_data['page_url'],
                 'page_title': event_data.get('page_title', ''),
                 'referrer': event_data.get('referrer', ''),
@@ -288,6 +365,7 @@ class handler(BaseHTTPRequestHandler):
                 'language': event_data.get('language'),
                 'timezone': event_data.get('timezone'),
                 'custom_params': event_data.get('custom_params', {}),
+                'ecommerce_data': ecommerce_data,  # Nuevo campo
                 'processed_at': datetime.utcnow().isoformat()
             }
             

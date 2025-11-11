@@ -354,7 +354,7 @@ class handler(BaseHTTPRequestHandler):
                 'user_id': event_data['user_id'],
                 'session_id': event_data['session_id'],
                 'event_type': event_data['event_type'],
-                'event_name': event_data.get('event_name'),  # Nuevo campo
+                'event_name': event_data.get('event_name') or ('pageview' if event_data['event_type'] == 'pageview' else None),  # Si es pageview y no tiene event_name, asignar 'pageview'
                 'page_url': event_data['page_url'],
                 'page_title': event_data.get('page_title', ''),
                 'referrer': event_data.get('referrer', ''),

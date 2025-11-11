@@ -1,18 +1,11 @@
 /**
- * AccuMetrics Analytics Pixel - Multi-tenant con Eventos Personalizados
- * Versión: 2.0.0
+ * AccuMetrics Analytics Pixel v2.0 - Multi-tenant
+ * VERSIÓN ACTUALIZADA: Sin captura automática de dataLayer
  * 
- * Características:
- * - Auto-tracking de pageviews
- * - Eventos personalizados
- * - Tracking de e-commerce (purchase)
- * - Integración con dataLayer
- * - GDPR compliant
- * 
- * Uso básico:
- * 1. Insertar antes del cierre de </body>
- * 2. Configurar endpoint y trackingCode
- * 3. Usar API pública para eventos custom
+ * Cambios en esta versión:
+ * - event_name = 'pageview' en pageviews (no null)
+ * - Listener de dataLayer DESACTIVADO
+ * - Solo eventos manuales: AccuMetrics.trackEvent() y AccuMetrics.trackPurchase()
  */
 
 (function() {
@@ -22,14 +15,14 @@
   // CONFIGURACIÓN
   // ============================================
   const CONFIG = {
-    endpoint: 'https://accumetrics.vercel.app/api/track', // ← CAMBIAR por tu dominio Vercel
-    trackingCode: 'c803f7bce0ad46a7896967d7647eafb1', // ← IMPORTANTE: Código único del proyecto
+    endpoint: 'https://accumetrics.vercel.app/api/track',
+    trackingCode: 'c803f7bce0ad46a7896967d7647eafb1',
     cookieName: '_analytics_uid',
     sessionCookieName: '_analytics_sid',
-    cookieExpireDays: 730, // 2 años
+    cookieExpireDays: 730,
     sessionTimeoutMinutes: 30,
-    respectDNT: true, // Respetar Do Not Track
-    debugMode: false // true para ver logs en consola
+    respectDNT: true,
+    debugMode: false
   };
 
   // ============================================
@@ -89,7 +82,6 @@
       sessionId = generateUUID();
       log('New session ID created:', sessionId);
     }
-    // Renovar cookie de sesión (30 min de inactividad)
     CookieUtil.set(CONFIG.sessionCookieName, sessionId, CONFIG.sessionTimeoutMinutes / (24 * 60));
     return sessionId;
   }
@@ -141,10 +133,8 @@
   // ============================================
   
   function sendEvent(eventData) {
-    // Añadir tracking_code
     eventData.tracking_code = CONFIG.trackingCode;
     
-    // Respetar Do Not Track si está configurado
     if (CONFIG.respectDNT && isDNTEnabled()) {
       log('Tracking disabled by Do Not Track');
       return;
@@ -152,13 +142,11 @@
 
     log('Sending event:', eventData.event_type, eventData.event_name || '');
 
-    // Usar sendBeacon si está disponible y no estamos en file:// (más confiable)
     if (navigator.sendBeacon && window.location.protocol !== 'file:') {
       const blob = new Blob([JSON.stringify(eventData)], { type: 'application/json' });
       const sent = navigator.sendBeacon(CONFIG.endpoint, blob);
       log('Event sent via sendBeacon:', sent);
     } else {
-      // Fallback a fetch (necesario para file:// y navegadores antiguos)
       fetch(CONFIG.endpoint, {
         method: 'POST',
         mode: 'cors',
@@ -209,6 +197,7 @@
   function trackPageview() {
     const eventData = getBaseEventData();
     eventData.event_type = 'pageview';
+    eventData.event_name = 'pageview';  // ACTUALIZADO: Ya no null
     eventData.custom_params = {};
     
     log('Tracking pageview:', eventData.page_url);
@@ -219,11 +208,6 @@
   // TRACKING DE EVENTOS PERSONALIZADOS
   // ============================================
   
-  /**
-   * Trackea un evento personalizado
-   * @param {string} eventName - Nombre del evento (ej: 'button_click', 'form_submit', 'funnel_step_1')
-   * @param {object} params - Parámetros adicionales del evento (opcional)
-   */
   function trackEvent(eventName, params) {
     if (!eventName || typeof eventName !== 'string') {
       console.error('[AccuMetrics] trackEvent: eventName debe ser un string');
@@ -243,25 +227,12 @@
   // TRACKING DE E-COMMERCE (PURCHASE)
   // ============================================
   
-  /**
-   * Trackea un evento de compra/purchase
-   * @param {object} purchaseData - Datos del pedido
-   * @param {string} purchaseData.transaction_id - ID único del pedido
-   * @param {number} purchaseData.value - Valor total del pedido
-   * @param {string} purchaseData.currency - Código de moneda (ej: 'EUR', 'USD')
-   * @param {array} purchaseData.items - Array de productos comprados
-   * @param {string} purchaseData.items[].id - ID del producto
-   * @param {string} purchaseData.items[].name - Nombre del producto
-   * @param {number} purchaseData.items[].quantity - Cantidad
-   * @param {number} purchaseData.items[].price - Precio unitario
-   */
   function trackPurchase(purchaseData) {
     if (!purchaseData || typeof purchaseData !== 'object') {
       console.error('[AccuMetrics] trackPurchase: purchaseData debe ser un objeto');
       return;
     }
 
-    // Validar campos obligatorios
     if (!purchaseData.transaction_id) {
       console.error('[AccuMetrics] trackPurchase: transaction_id es obligatorio');
       return;
@@ -282,7 +253,6 @@
     eventData.event_name = 'purchase';
     eventData.custom_params = {};
     
-    // Datos de e-commerce en formato estructurado
     eventData.ecommerce_data = {
       transaction_id: purchaseData.transaction_id,
       value: purchaseData.value,
@@ -297,7 +267,6 @@
       })
     };
 
-    // Agregar campos adicionales si existen
     if (purchaseData.tax) eventData.ecommerce_data.tax = purchaseData.tax;
     if (purchaseData.shipping) eventData.ecommerce_data.shipping = purchaseData.shipping;
     if (purchaseData.coupon) eventData.ecommerce_data.coupon = purchaseData.coupon;
@@ -307,64 +276,22 @@
   }
 
   // ============================================
-  // INTEGRACIÓN CON DATALAYER
+  // INTEGRACIÓN CON DATALAYER - DESACTIVADO
   // ============================================
   
-  /**
-   * Escucha eventos del dataLayer (si existe)
-   * Compatible con Google Tag Manager y dataLayers personalizados
-   */
   function initDataLayerListener() {
-    // Verificar si existe dataLayer
-    if (!window.dataLayer) {
-      log('dataLayer no encontrado, listener no inicializado');
-      return;
-    }
-
-    log('dataLayer encontrado, inicializando listener');
-
-    // Guardar push original
-    const originalPush = window.dataLayer.push;
-
-    // Override del push para interceptar eventos
-    window.dataLayer.push = function() {
-      // Llamar al push original
-      const result = originalPush.apply(this, arguments);
-
-      // Procesar cada argumento (pueden ser múltiples)
-      for (let i = 0; i < arguments.length; i++) {
-        const data = arguments[i];
-        
-        if (data && typeof data === 'object' && data.event) {
-          log('dataLayer event detected:', data.event);
-
-          // Si es un evento de purchase
-          if (data.event === 'purchase' && data.ecommerce) {
-            const ecomm = data.ecommerce;
-            trackPurchase({
-              transaction_id: ecomm.transaction_id,
-              value: ecomm.value || ecomm.revenue,
-              currency: ecomm.currency,
-              items: ecomm.items || [],
-              tax: ecomm.tax,
-              shipping: ecomm.shipping
-            });
-          }
-          // Cualquier otro evento custom
-          else if (data.event !== 'gtm.js' && data.event !== 'gtm.dom' && data.event !== 'gtm.load') {
-            // Crear copia sin el campo 'event' para custom_params
-            const params = Object.assign({}, data);
-            delete params.event;
-            
-            trackEvent(data.event, params);
-          }
-        }
-      }
-
-      return result;
-    };
-
-    log('dataLayer listener activo');
+    // ============================================
+    // LISTENER DE DATALAYER DESACTIVADO
+    // ============================================
+    // El píxel NO captura eventos del dataLayer automáticamente.
+    // Esto evita capturar eventos no deseados como cookie_consent_*
+    // 
+    // Para trackear eventos, usa la API manual:
+    //   AccuMetrics.trackEvent('nombre_evento', params)
+    //   AccuMetrics.trackPurchase(purchaseData)
+    
+    log('dataLayer listener DESACTIVADO - usar API manual');
+    return;
   }
 
   // ============================================
@@ -372,21 +299,18 @@
   // ============================================
   
   function init() {
-    log('Initializing AccuMetrics Pixel v2.0.0');
+    log('Initializing AccuMetrics Pixel v2.0.1');
     log('Tracking Code:', CONFIG.trackingCode);
     log('Endpoint:', CONFIG.endpoint);
 
-    // Esperar a que el DOM esté listo para pageview
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', trackPageview);
     } else {
       trackPageview();
     }
 
-    // Inicializar listener de dataLayer
     initDataLayerListener();
 
-    // Track pageviews en SPA (single page apps)
     let lastUrl = location.href;
     new MutationObserver(function() {
       const url = location.href;
@@ -405,23 +329,15 @@
   // ============================================
   
   window.AccuMetrics = {
-    // Tracking methods
     trackPageview: trackPageview,
     trackEvent: trackEvent,
     trackPurchase: trackPurchase,
-    
-    // Utility methods
     getUserId: getUserId,
     getSessionId: getSessionId,
-    
-    // Configuration
     config: CONFIG,
-    
-    // Version
-    version: '2.0.0'
+    version: '2.0.1'
   };
 
-  // Alias corto (opcional)
   window.am = window.AccuMetrics;
 
   // ============================================
